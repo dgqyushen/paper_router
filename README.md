@@ -1,5 +1,7 @@
 # paper_router
 
+English | [中文](./README_CN.md)
+
 [![Tests](https://img.shields.io/badge/tests-80%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
