@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import time
+import asyncio
 
 import httpx
 from bs4 import BeautifulSoup
@@ -60,6 +60,6 @@ async def scrape_letpub(
             all_journals.append((name, major_q, None))
 
         page += 1
-        time.sleep(delay_seconds)
+        await asyncio.sleep(delay_seconds)
 
     return all_journals

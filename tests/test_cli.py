@@ -40,11 +40,12 @@ def _run_cli(*args: str) -> tuple[int, str]:
 
 
 def _run_cli_json(*args: str) -> tuple[int, dict]:
-    """Run CLI, parse stdout as JSON, return (exit_code, parsed)."""
+    """Run CLI, parse the last NDJSON line (the result event), return (exit_code, parsed)."""
     code, stdout = _run_cli(*args)
-    if not stdout.strip():
+    lines = [l for l in stdout.strip().split("\n") if l.strip()]
+    if not lines:
         return code, {}
-    return code, json.loads(stdout)
+    return code, json.loads(lines[-1])
 
 
 def _make_paper(
@@ -85,20 +86,22 @@ class TestBuildParser:
 
 class TestParseDate:
     def test_valid_date(self) -> None:
-        assert _parse_date("2024-06-15", "start_date", compact=False) == date(2024, 6, 15)
+        assert _parse_date("2024-06-15", "start_date") == date(2024, 6, 15)
 
     def test_none(self) -> None:
-        assert _parse_date(None, "start_date", compact=False) is None
+        assert _parse_date(None, "start_date") is None
 
     def test_empty_string(self) -> None:
-        assert _parse_date("", "start_date", compact=False) is None
+        assert _parse_date("", "start_date") is None
 
     def test_invalid_exits_with_json_error(self, capsys: pytest.CaptureFixture) -> None:
         with pytest.raises(SystemExit) as exc_info:
-            _parse_date("not-a-date", "start_date", compact=False)
+            _parse_date("not-a-date", "start_date")
         assert exc_info.value.code == 1
         out = capsys.readouterr().out
         data = json.loads(out)
+        assert data["finish"] is True
+        assert data["type"] == "result"
         assert data["success"] is False
         assert "Invalid date format" in data["error"]
 
@@ -212,7 +215,7 @@ class TestSearchOutput:
         assert result["quartile"] == "Q1"
         assert result["publication_date"] == "2024-06-01"
 
-    def test_compact_output(self) -> None:
+    def test_compact_flag_accepted(self) -> None:
         mock_papers = [_make_paper()]
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
@@ -220,11 +223,10 @@ class TestSearchOutput:
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, stdout = _run_cli("search", "--queries", "test", "--providers", "openalex", "--compact")
+            code, data = _run_cli_json("search", "--queries", "test", "--providers", "openalex", "--compact")
 
         assert code == 0
-        lines = stdout.strip().split("\n")
-        assert len(lines) == 1  # compact = single line
+        assert data["success"] is True  # --compact is a no-op but accepted
 
     def test_multi_query_merges_and_dedupes(self) -> None:
         paper_a = _make_paper("Paper A", doi="10.1000/a", external_id="1")

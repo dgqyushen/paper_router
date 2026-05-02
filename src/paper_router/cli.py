@@ -23,17 +23,18 @@ from paper_router.registry import (
 )
 
 
-def _output(data: dict, *, compact: bool = False) -> None:
-    indent = None if compact else 2
+def _emit(event: dict) -> None:
+    """Emit a single NDJSON event line to stdout. Flush immediately for pipe consumers."""
     if sys.platform == "win32":
-        print(json.dumps(data, ensure_ascii=True, indent=indent))
+        print(json.dumps(event, ensure_ascii=True), flush=True)
     else:
-        print(json.dumps(data, ensure_ascii=False, indent=indent))
+        print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
-def _error(message: str, *, compact: bool = False, **extra: object) -> None:
-    payload: dict = {"success": False, "error": message, **extra}
-    _output(payload, compact=compact)
+def _error(message: str, **extra: object) -> None:
+    """Emit a fatal error result event and exit."""
+    _emit({"finish": True, "type": "result", "success": False, "error": message, **extra})
+    sys.exit(1)
 
 
 def _paper_to_dict(paper: Paper) -> dict:
@@ -51,17 +52,13 @@ def _paper_to_dict(paper: Paper) -> dict:
     }
 
 
-def _parse_date(value: str | None, field_name: str, *, compact: bool) -> date | None:
+def _parse_date(value: str | None, field_name: str) -> date | None:
     if not value:
         return None
     try:
         return date.fromisoformat(value)
     except ValueError:
-        _error(
-            f"Invalid date format for {field_name}: {value!r}. Expected YYYY-MM-DD.",
-            compact=compact,
-        )
-        sys.exit(1)
+        _error(f"Invalid date format for {field_name}: {value!r}. Expected YYYY-MM-DD.")
 
 
 async def _run_search(
@@ -70,19 +67,27 @@ async def _run_search(
     start_date: date | None,
     end_date: date | None,
     limit: int | None,
-    compact: bool,
     quartiles: frozenset,
 ) -> None:
     warnings: list[str] = []
     all_papers: list[Paper] = []
     success_count = 0
-    total_attempts = len(queries) * len(provider_names)
+    total = len(queries) * len(provider_names)
+    current = 0
 
     router = create_router(provider_names)
 
     try:
+        _emit({"finish": False, "type": "progress", "current": current, "total": total, "message": "Starting search..."})
+        print(f"[{current}/{total}] Starting search...", file=sys.stderr)
+
         for query in queries:
             for provider_name in provider_names:
+                current += 1
+                msg = f"searching {provider_name} for '{query}'..."
+                _emit({"finish": False, "type": "progress", "current": current, "total": total, "message": msg})
+                print(f"[{current}/{total}] {provider_name}: searching '{query}'...", file=sys.stderr)
+
                 try:
                     request = SearchRequest(
                         query=query,
@@ -96,10 +101,25 @@ async def _run_search(
                     all_papers.extend(papers)
                     warnings.extend(ws)
                     success_count += 1
+
+                    _emit({
+                        "finish": False,
+                        "type": "papers",
+                        "provider": provider_name,
+                        "query": query,
+                        "count": len(papers),
+                        "papers": [_paper_to_dict(p) for p in papers],
+                    })
                 except Exception as exc:
-                    warnings.append(
-                        f"Provider '{provider_name}' failed for query '{query}': {exc}"
-                    )
+                    msg = f"Provider '{provider_name}' failed for query '{query}': {exc}"
+                    warnings.append(msg)
+                    _emit({
+                        "finish": False,
+                        "type": "error",
+                        "provider": provider_name,
+                        "query": query,
+                        "message": str(exc),
+                    })
 
         # Deduplicate across queries/providers
         seen_keys: set[str] = set()
@@ -116,14 +136,18 @@ async def _run_search(
         results = [_paper_to_dict(p) for p in unique]
 
         if success_count == 0:
-            _error(
-                "All search attempts failed.",
-                compact=compact,
-                warnings=warnings,
-            )
+            _emit({
+                "finish": True,
+                "type": "result",
+                "success": False,
+                "error": "All search attempts failed.",
+                "warnings": warnings,
+            })
             sys.exit(1)
 
         output: dict = {
+            "finish": True,
+            "type": "result",
             "success": True,
             "queries": queries,
             "providers": provider_names,
@@ -133,7 +157,7 @@ async def _run_search(
         if warnings:
             output["warnings"] = warnings
 
-        _output(output, compact=compact)
+        _emit(output)
 
     finally:
         await router.aclose()
@@ -141,16 +165,15 @@ async def _run_search(
 
 async def _run_update_quartiles(year: int) -> None:
     store = QuartileStore()
-    print(f"Updating JCR quartile data (year={year})...")
+    print(f"Updating JCR quartile data (year={year})...", file=sys.stderr)
     async with httpx.AsyncClient(timeout=30.0) as client:
         rows = await scrape_letpub(client, jcr_year=year)
     if not rows:
         _error("No journals found. LetPub may have changed its page layout.")
-        sys.exit(1)
 
     records = [(name, q, year, cat) for name, q, cat in rows]
     count = store.upsert_batch(records, jcr_year=year)
-    print(f"Updated {count} journal quartile records.")
+    _emit({"finish": True, "type": "result", "success": True, "message": f"Updated {count} journal quartile records."})
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -243,34 +266,27 @@ def main() -> None:
         return
 
     if args.command == "search":
-        compact = args.compact
-
         queries = [q.strip() for q in args.queries]
         blank = [i for i, q in enumerate(queries) if not q]
         if blank:
-            _error(f"Empty query at position {blank[0]}. Queries must be non-empty.", compact=compact)
-            sys.exit(1)
+            _error(f"Empty query at position {blank[0]}. Queries must be non-empty.")
 
         provider_names = _flatten_providers(args.providers) or list(VALID_PROVIDER_NAMES)
         unknown = sorted(set(provider_names) - set(VALID_PROVIDER_NAMES))
         if unknown:
             _error(
                 f"Unknown provider(s): {', '.join(unknown)}",
-                compact=compact,
-                available_providers=VALID_PROVIDER_NAMES,
+                available_providers=list(VALID_PROVIDER_NAMES),
             )
-            sys.exit(1)
 
         if args.limit is not None and args.limit <= 0:
-            _error(f"limit must be positive, got {args.limit}", compact=compact)
-            sys.exit(1)
+            _error(f"limit must be positive, got {args.limit}")
 
-        start_date = _parse_date(args.start_date, "start_date", compact=compact)
-        end_date = _parse_date(args.end_date, "end_date", compact=compact)
+        start_date = _parse_date(args.start_date, "start_date")
+        end_date = _parse_date(args.end_date, "end_date")
 
         if start_date and end_date and start_date > end_date:
-            _error("start_date must be <= end_date", compact=compact)
-            sys.exit(1)
+            _error("start_date must be <= end_date")
 
         quartiles = frozenset(args.quartiles) if args.quartiles else frozenset()
 
@@ -280,7 +296,6 @@ def main() -> None:
             start_date=start_date,
             end_date=end_date,
             limit=args.limit,
-            compact=compact,
             quartiles=quartiles,
         ))
         return
