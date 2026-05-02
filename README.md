@@ -8,7 +8,7 @@ English | [中文](./README_CN.md)
 
 Async aggregation layer for academic paper search across multiple providers. Normalizes results into a unified format with deduplication, filtering, and rate limiting.
 
-Designed for **agent consumption** — CLI outputs structured JSON, all errors are parseable, provider failures are isolated.
+Designed for **agent consumption** — CLI outputs a line-delimited JSON stream (NDJSON), all errors are parseable, provider failures are isolated.
 
 ## Features
 
@@ -26,24 +26,21 @@ Designed for **agent consumption** — CLI outputs structured JSON, all errors a
 poetry install
 
 # Search (all 4 providers by default)
-paper-router --queries "silicon anode" --limit 10
+paper-router search --queries "silicon anode" --limit 10
 
 # With date filter
-paper-router --queries "battery cathode" --start_date 2024-01-01 --end_date 2024-12-31
+paper-router search --queries "battery cathode" --start_date 2024-01-01 --end_date 2024-12-31
 
 # Specific providers only
-paper-router --queries "perovskite solar" --providers openalex crossref
-
-# Compact single-line JSON output
-paper-router --queries "graph neural network" --compact
+paper-router search --queries "perovskite solar" --providers openalex crossref
 ```
 
 ## CLI Reference
 
 ```
-paper-router --queries QUERIES [--providers PROVIDERS ...]
-             [--start_date YYYY-MM-DD] [--end_date YYYY-MM-DD]
-             [--limit N] [--compact]
+paper-router search --queries QUERIES [--providers PROVIDERS ...]
+                   [--start_date YYYY-MM-DD] [--end_date YYYY-MM-DD]
+                   [--limit N] [--quartiles Q1 Q2 ...]
 ```
 
 | Parameter | Required | Description |
@@ -53,56 +50,46 @@ paper-router --queries QUERIES [--providers PROVIDERS ...]
 | `--start_date` | No | Earliest publication date |
 | `--end_date` | No | Latest publication date |
 | `--limit` | No | Max results per query |
-| `--compact` | No | Single-line JSON output |
+| `--quartiles` | No | Filter by JCR quartile (e.g. `Q1 Q2`) |
 
-### Output Format
+### Output Format (NDJSON Stream)
 
-**Success** (`exit 0`):
+stdout is a newline-delimited JSON stream. Each line is a self-contained event.
+Read line by line to process results incrementally.
+
+**Progress** — emitted before each provider call:
 ```json
-{
-  "success": true,
-  "queries": ["silicon anode"],
-  "providers": ["arxiv", "crossref", "openalex", "semantic_scholar"],
-  "count": 91,
-  "results": [
-    {
-      "source": "crossref",
-      "external_id": "10.1007/s40820-026-02157-0",
-      "title": "Revisiting the Modification Strategies...",
-      "authors": ["Yueying Chen", "Hanyi Yu", "..."],
-      "publication_date": "2026-12-01",
-      "doi": "10.1007/s40820-026-02157-0",
-      "venue": "Nano-Micro Letters",
-      "abstract": "In recent years, advanced battery systems...",
-      "url": "https://doi.org/10.1007/s40820-026-02157-0",
-      "quartile": null
-    }
-  ],
-  "warnings": []
-}
+{"finish":false,"type":"progress","current":1,"total":4,"message":"searching openalex for 'silicon anode'..."}
 ```
 
-**Error** (`exit 1`):
+**Papers** — emitted when a provider returns results:
 ```json
-{
-  "success": false,
-  "error": "Unknown provider(s): fake_provider",
-  "available_providers": ["arxiv", "crossref", "openalex", "semantic_scholar"]
-}
+{"finish":false,"type":"papers","provider":"openalex","query":"silicon anode","count":50,"papers":[
+  {"source":"openalex","external_id":"W123","title":"...","authors":["..."],"publication_date":"2024-06-01","doi":"10.xxx","venue":"Nature","abstract":"...","url":"https://...","quartile":"Q1"}
+]}
 ```
+
+**Error** — emitted when a provider call fails (search continues):
+```json
+{"finish":false,"type":"error","provider":"arxiv","query":"silicon anode","message":"Connection timeout"}
+```
+
+**Result** — always the last line. Deduplicated, sorted final output:
+```json
+{"finish":true,"type":"result","success":true,"queries":["silicon anode"],"providers":["openalex","arxiv"],"count":27,"results":[...],"warnings":["JCR quartile data is outdated..."]}
+```
+
+On fatal error:
+```json
+{"finish":true,"type":"result","success":false,"error":"Unknown provider(s): fake_provider","available_providers":["arxiv","crossref","openalex","semantic_scholar"]}
+```
+
+> **Consuming the stream**: Parse each line as independent JSON. The `finish` field signals completion. The `papers` events contain raw per-provider results (may overlap); the final `result` event has the deduplicated set.
 
 ### Partial Failure
 
-When some providers fail, results from successful ones are still returned:
-
-```json
-{
-  "success": true,
-  "count": 42,
-  "results": ["..."],
-  "warnings": ["Provider 'arxiv' failed for query 'test': timeout"]
-}
-```
+When some providers fail, results from successful ones are still returned.
+The `result` event contains warnings for each failure.
 
 ## Python API
 

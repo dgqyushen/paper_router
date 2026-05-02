@@ -8,7 +8,7 @@
 
 学术论文搜索聚合层。跨多个数据源异步检索论文，统一格式输出，支持去重、过滤和限流。
 
-专为 **Agent 调用** 设计 — CLI 输出结构化 JSON，错误可解析，单个数据源故障不阻塞整体查询。
+专为 **Agent 调用** 设计 — CLI 输出换行分隔的 JSON 流（NDJSON），错误可解析，单个数据源故障不阻塞整体查询。
 
 ## 特性
 
@@ -26,24 +26,21 @@
 poetry install
 
 # 搜索（默认使用全部 4 个数据源）
-paper-router --queries "silicon anode" --limit 10
+paper-router search --queries "silicon anode" --limit 10
 
 # 带日期过滤
-paper-router --queries "battery cathode" --start_date 2024-01-01 --end_date 2024-12-31
+paper-router search --queries "battery cathode" --start_date 2024-01-01 --end_date 2024-12-31
 
 # 指定数据源
-paper-router --queries "perovskite solar" --providers openalex crossref
-
-# 紧凑单行 JSON 输出
-paper-router --queries "graph neural network" --compact
+paper-router search --queries "perovskite solar" --providers openalex crossref
 ```
 
 ## CLI 参数
 
 ```
-paper-router --queries QUERIES [--providers PROVIDERS ...]
-             [--start_date YYYY-MM-DD] [--end_date YYYY-MM-DD]
-             [--limit N] [--compact]
+paper-router search --queries QUERIES [--providers PROVIDERS ...]
+                   [--start_date YYYY-MM-DD] [--end_date YYYY-MM-DD]
+                   [--limit N] [--quartiles Q1 Q2 ...]
 ```
 
 | 参数 | 必填 | 说明 |
@@ -53,56 +50,44 @@ paper-router --queries QUERIES [--providers PROVIDERS ...]
 | `--start_date` | 否 | 最早发表日期 |
 | `--end_date` | 否 | 最晚发表日期 |
 | `--limit` | 否 | 每个查询最大返回数 |
-| `--compact` | 否 | 单行紧凑 JSON 输出 |
+| `--quartiles` | 否 | 按 JCR 分区过滤（如 `Q1 Q2`） |
 
-### 输出格式
+### 输出格式（NDJSON 流）
 
-**成功**（`exit 0`）：
+stdout 输出换行分隔的 JSON 流。每行是一个独立事件，逐行读取即可增量处理。
+
+**进度事件** — 每个数据源调用前发出：
 ```json
-{
-  "success": true,
-  "queries": ["silicon anode"],
-  "providers": ["arxiv", "crossref", "openalex", "semantic_scholar"],
-  "count": 91,
-  "results": [
-    {
-      "source": "crossref",
-      "external_id": "10.1007/s40820-026-02157-0",
-      "title": "Revisiting the Modification Strategies...",
-      "authors": ["Yueying Chen", "Hanyi Yu", "..."],
-      "publication_date": "2026-12-01",
-      "doi": "10.1007/s40820-026-02157-0",
-      "venue": "Nano-Micro Letters",
-      "abstract": "In recent years, advanced battery systems...",
-      "url": "https://doi.org/10.1007/s40820-026-02157-0",
-      "quartile": null
-    }
-  ],
-  "warnings": []
-}
+{"finish":false,"type":"progress","current":1,"total":4,"message":"searching openalex for 'silicon anode'..."}
 ```
 
-**错误**（`exit 1`）：
+**论文事件** — 数据源返回结果时立即发出：
 ```json
-{
-  "success": false,
-  "error": "Unknown provider(s): fake_provider",
-  "available_providers": ["arxiv", "crossref", "openalex", "semantic_scholar"]
-}
+{"finish":false,"type":"papers","provider":"openalex","query":"silicon anode","count":50,"papers":[
+  {"source":"openalex","external_id":"W123","title":"...","authors":["..."],"publication_date":"2024-06-01","doi":"10.xxx","venue":"Nature","abstract":"...","url":"https://...","quartile":"Q1"}
+]}
 ```
+
+**错误事件** — 单个数据源失败时发出（继续其他查询）：
+```json
+{"finish":false,"type":"error","provider":"arxiv","query":"silicon anode","message":"Connection timeout"}
+```
+
+**结果事件** — 始终在最后一行。去重排序后的最终结果：
+```json
+{"finish":true,"type":"result","success":true,"queries":["silicon anode"],"providers":["openalex","arxiv"],"count":27,"results":[...],"warnings":["JCR quartile data is outdated..."]}
+```
+
+**致命错误**：
+```json
+{"finish":true,"type":"result","success":false,"error":"Unknown provider(s): fake_provider","available_providers":["arxiv","crossref","openalex","semantic_scholar"]}
+```
+
+> **消费方式**：每行是一个独立 JSON，`finish` 字段标记是否结束。`papers` 事件包含每个数据源的原始结果（未去重），`result` 事件包含最终去重集。
 
 ### 部分失败
 
-当某些数据源失败时，仍返回其他数据源的结果：
-
-```json
-{
-  "success": true,
-  "count": 42,
-  "results": ["..."],
-  "warnings": ["Provider 'arxiv' failed for query 'test': timeout"]
-}
-```
+当某些数据源失败时，仍返回其他数据源的结果。`result` 事件的 `warnings` 字段列出所有异常。
 
 ## Python API
 
