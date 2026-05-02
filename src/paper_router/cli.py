@@ -70,12 +70,14 @@ async def _run_search(
     quartiles: frozenset,
 ) -> None:
     warnings: list[str] = []
+    seen_warnings: set[str] = set()
     all_papers: list[Paper] = []
     success_count = 0
     total = len(queries) * len(provider_names)
     current = 0
 
     router = create_router(provider_names)
+    store = QuartileStore()
 
     try:
         _emit({"finish": False, "type": "progress", "current": current, "total": total, "message": "Starting search..."})
@@ -97,9 +99,12 @@ async def _run_search(
                         providers=(provider_name,),
                         quartiles=quartiles,
                     )
-                    papers, ws = await router.search(request)
+                    papers, ws = await router.search(request, quartile_store=store)
                     all_papers.extend(papers)
-                    warnings.extend(ws)
+                    for w in ws:
+                        if w not in seen_warnings:
+                            seen_warnings.add(w)
+                            warnings.append(w)
                     success_count += 1
 
                     _emit({
@@ -160,6 +165,7 @@ async def _run_search(
         _emit(output)
 
     finally:
+        store.close()
         await router.aclose()
 
 

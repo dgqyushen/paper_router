@@ -237,7 +237,7 @@ class TestSearchOutput:
         # query × provider: 2 queries × 1 provider = 2 calls
         results_per_call = [[paper_a], [paper_b, paper_a_dup]]
 
-        async def mock_search(request):
+        async def mock_search(request, **kwargs):
             result = results_per_call[call_count[0]]
             call_count[0] += 1
             return (result, [])
@@ -344,7 +344,7 @@ class TestProviderFaultTolerance:
         paper = _make_paper()
         call_count = [0]
 
-        async def mock_search(request):
+        async def mock_search(request, **kwargs):
             call_count[0] += 1
             if request.providers == ("openalex",):
                 return ([paper], [])
@@ -394,7 +394,7 @@ class TestProviderFaultTolerance:
             [paper],           # q2/arxiv
         ]
 
-        async def mock_search(request):
+        async def mock_search(request, **kwargs):
             result = behavior[call_idx[0]]
             call_idx[0] += 1
             if isinstance(result, Exception):
