@@ -1,8 +1,8 @@
 """paper_router CLI — synchronous JSON interface for agent consumption.
 
 Usage:
-  paper-router --queries "silicon anode" --providers openalex arxiv --limit 10
-  paper-router --queries "battery" "cathode" --start_date 2024-01-01 --compact
+  paper-router search --queries "silicon anode" --providers openalex arxiv --limit 10
+  paper-router update-quartiles [--year 2024]
 """
 
 from __future__ import annotations
@@ -13,16 +13,15 @@ import json
 import sys
 from datetime import date
 
+import httpx
+
 from paper_router.models import Paper, SearchRequest
+from paper_router.quartiles import QuartileStore, scrape_letpub
 from paper_router.registry import (
     VALID_PROVIDER_NAMES,
     create_router,
 )
 
-
-# ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
 
 def _output(data: dict, *, compact: bool = False) -> None:
     indent = None if compact else 2
@@ -52,10 +51,6 @@ def _paper_to_dict(paper: Paper) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Date parsing with structured errors
-# ---------------------------------------------------------------------------
-
 def _parse_date(value: str | None, field_name: str, *, compact: bool) -> date | None:
     if not value:
         return None
@@ -69,10 +64,6 @@ def _parse_date(value: str | None, field_name: str, *, compact: bool) -> date | 
         sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Core search logic — query × provider granularity
-# ---------------------------------------------------------------------------
-
 async def _run_search(
     queries: list[str],
     provider_names: list[str],
@@ -80,8 +71,8 @@ async def _run_search(
     end_date: date | None,
     limit: int | None,
     compact: bool,
+    quartiles: frozenset,
 ) -> None:
-    """Execute search synchronously, print structured JSON, exit."""
     warnings: list[str] = []
     all_papers: list[Paper] = []
     success_count = 0
@@ -99,9 +90,11 @@ async def _run_search(
                         end_date=end_date,
                         limit=limit,
                         providers=(provider_name,),
+                        quartiles=quartiles,
                     )
-                    papers = await router.search(request)
+                    papers, ws = await router.search(request)
                     all_papers.extend(papers)
+                    warnings.extend(ws)
                     success_count += 1
                 except Exception as exc:
                     warnings.append(
@@ -123,7 +116,6 @@ async def _run_search(
         results = [_paper_to_dict(p) for p in unique]
 
         if success_count == 0:
-            # All attempts failed
             _error(
                 "All search attempts failed.",
                 compact=compact,
@@ -147,62 +139,89 @@ async def _run_search(
         await router.aclose()
 
 
-# ---------------------------------------------------------------------------
-# CLI argument parsing
-# ---------------------------------------------------------------------------
+async def _run_update_quartiles(year: int) -> None:
+    store = QuartileStore()
+    print(f"Updating JCR quartile data (year={year})...")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        rows = await scrape_letpub(client, jcr_year=year)
+    if not rows:
+        _error("No journals found. LetPub may have changed its page layout.")
+        sys.exit(1)
+
+    records = [(name, q, year, cat) for name, q, cat in rows]
+    count = store.upsert_batch(records, jcr_year=year)
+    print(f"Updated {count} journal quartile records.")
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="paper-router",
         description="Academic paper search CLI for agent consumption",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-examples:
-  paper-router --queries "silicon anode" --limit 10
-  paper-router --queries "battery" "cathode" --providers openalex arxiv
-  paper-router --queries "Li-ion" --start_date 2024-01-01 --end_date 2024-12-31 --compact
-""",
     )
+    subparsers = parser.add_subparsers(dest="command")
 
-    parser.add_argument(
+    # search subcommand
+    search_parser = subparsers.add_parser("search", help="Search academic papers")
+    search_parser.add_argument(
         "--queries",
         type=str,
         nargs="+",
+        required=True,
         help="Search queries (one or more)",
     )
-    parser.add_argument(
+    search_parser.add_argument(
         "--providers",
         type=str,
         nargs="+",
         action="append",
         help=f"Providers to use (default: all). Choices: {', '.join(VALID_PROVIDER_NAMES)}",
     )
-    parser.add_argument(
+    search_parser.add_argument(
         "--start_date",
         type=str,
         help="Earliest publication date (YYYY-MM-DD)",
     )
-    parser.add_argument(
+    search_parser.add_argument(
         "--end_date",
         type=str,
         help="Latest publication date (YYYY-MM-DD)",
     )
-    parser.add_argument(
+    search_parser.add_argument(
         "--limit",
         type=int,
         help="Maximum results per query",
     )
-    parser.add_argument(
+    search_parser.add_argument(
+        "--quartiles",
+        type=str,
+        nargs="+",
+        choices=["Q1", "Q2", "Q3", "Q4"],
+        help="Filter by JCR quartile(s)",
+    )
+    search_parser.add_argument(
         "--compact",
         action="store_true",
         help="Output compact JSON (no indentation)",
+    )
+
+    # update-quartiles subcommand
+    update_parser = subparsers.add_parser(
+        "update-quartiles",
+        help="Update local JCR quartile database from LetPub",
+        description="Update local JCR quartile database from LetPub",
+    )
+    update_parser.add_argument(
+        "--year",
+        type=int,
+        default=2024,
+        help="JCR year to fetch (default: 2024)",
     )
 
     return parser
 
 
 def _flatten_providers(raw: list[list[str]] | None) -> list[str] | None:
-    """Flatten repeated --providers flags and deduplicate preserving order."""
     if not raw:
         return None
     flat: list[str] = []
@@ -215,62 +234,58 @@ def _flatten_providers(raw: list[list[str]] | None) -> list[str] | None:
     return flat
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
-    compact = args.compact
 
-    # --- Validate queries ---
-    if not args.queries:
-        _error("No queries provided. Use --queries to specify search terms.", compact=compact)
-        sys.exit(1)
+    if args.command == "update-quartiles":
+        asyncio.run(_run_update_quartiles(args.year))
+        return
 
-    # Reject blank / whitespace-only queries
-    queries = [q.strip() for q in args.queries]
-    blank = [i for i, q in enumerate(queries) if not q]
-    if blank:
-        _error(
-            f"Empty query at position {blank[0]}. Queries must be non-empty strings.",
+    if args.command == "search":
+        compact = args.compact
+
+        queries = [q.strip() for q in args.queries]
+        blank = [i for i, q in enumerate(queries) if not q]
+        if blank:
+            _error(f"Empty query at position {blank[0]}. Queries must be non-empty.", compact=compact)
+            sys.exit(1)
+
+        provider_names = _flatten_providers(args.providers) or list(VALID_PROVIDER_NAMES)
+        unknown = sorted(set(provider_names) - set(VALID_PROVIDER_NAMES))
+        if unknown:
+            _error(
+                f"Unknown provider(s): {', '.join(unknown)}",
+                compact=compact,
+                available_providers=VALID_PROVIDER_NAMES,
+            )
+            sys.exit(1)
+
+        if args.limit is not None and args.limit <= 0:
+            _error(f"limit must be positive, got {args.limit}", compact=compact)
+            sys.exit(1)
+
+        start_date = _parse_date(args.start_date, "start_date", compact=compact)
+        end_date = _parse_date(args.end_date, "end_date", compact=compact)
+
+        if start_date and end_date and start_date > end_date:
+            _error("start_date must be <= end_date", compact=compact)
+            sys.exit(1)
+
+        quartiles = frozenset(args.quartiles) if args.quartiles else frozenset()
+
+        asyncio.run(_run_search(
+            queries=queries,
+            provider_names=provider_names,
+            start_date=start_date,
+            end_date=end_date,
+            limit=args.limit,
             compact=compact,
-        )
-        sys.exit(1)
+            quartiles=quartiles,
+        ))
+        return
 
-    # --- Validate providers ---
-    provider_names = _flatten_providers(args.providers) or list(VALID_PROVIDER_NAMES)
-    unknown = sorted(set(provider_names) - set(VALID_PROVIDER_NAMES))
-    if unknown:
-        _error(
-            f"Unknown provider(s): {', '.join(unknown)}",
-            compact=compact,
-            available_providers=VALID_PROVIDER_NAMES,
-        )
-        sys.exit(1)
-
-    # --- Validate limit ---
-    if args.limit is not None and args.limit <= 0:
-        _error(f"limit must be positive, got {args.limit}", compact=compact)
-        sys.exit(1)
-
-    # --- Validate dates ---
-    start_date = _parse_date(args.start_date, "start_date", compact=compact)
-    end_date = _parse_date(args.end_date, "end_date", compact=compact)
-
-    if start_date and end_date and start_date > end_date:
-        _error("start_date must be <= end_date", compact=compact)
-        sys.exit(1)
-
-    asyncio.run(_run_search(
-        queries=queries,
-        provider_names=provider_names,
-        start_date=start_date,
-        end_date=end_date,
-        limit=args.limit,
-        compact=compact,
-    ))
+    parser.print_help()
 
 
 if __name__ == "__main__":
