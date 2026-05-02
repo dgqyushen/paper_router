@@ -30,3 +30,6 @@ Thumbs.db
 
 # Claude
 .claude/
+
+# Runtime data
+db/
