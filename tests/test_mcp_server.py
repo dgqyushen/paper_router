@@ -88,7 +88,7 @@ async def test_handle_search_papers_returns_json_structure() -> None:
     ]
     with patch("paper_router.mcp_server.create_router") as mock_create:
         mock_router = AsyncMock()
-        mock_router.search.return_value = mock_papers
+        mock_router.search.return_value = (mock_papers, [])
         mock_router.aclose = AsyncMock()
         mock_create.return_value = mock_router
 

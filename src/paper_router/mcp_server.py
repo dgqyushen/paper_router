@@ -102,9 +102,12 @@ async def _handle_search_papers(arguments: dict) -> list[TextContent]:
             end_date=end_date,
             limit=limit,
         )
-        papers = await router.search(request)
+        papers, warnings = await router.search(request)
         results = [_paper_to_dict(p) for p in papers]
-        text = json.dumps({"count": len(results), "results": results}, indent=2)
+        output: dict = {"count": len(results), "results": results}
+        if warnings:
+            output["warnings"] = warnings
+        text = json.dumps(output, indent=2)
         return [TextContent(type="text", text=text)]
     finally:
         await router.aclose()

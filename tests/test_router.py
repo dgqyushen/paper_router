@@ -60,7 +60,7 @@ async def test_router_filters_by_date_and_quartile() -> None:
         ]
     )
 
-    result = await router.search(
+    result, _ = await router.search(
         SearchRequest(
             query="test",
             start_date=date(2024, 1, 1),
@@ -104,7 +104,7 @@ async def test_router_dedupes_by_doi_across_providers() -> None:
         ]
     )
 
-    result = await router.search(SearchRequest(query="test"))
+    result, _ = await router.search(SearchRequest(query="test"))
 
     assert len(result) == 1
     assert result[0].source == "openalex"
@@ -125,7 +125,7 @@ async def test_router_restricts_selected_providers() -> None:
         ]
     )
 
-    result = await router.search(SearchRequest(query="test", providers=("semantic_scholar",)))
+    result, _ = await router.search(SearchRequest(query="test", providers=("semantic_scholar",)))
 
     assert [paper.source for paper in result] == ["semantic_scholar"]
 

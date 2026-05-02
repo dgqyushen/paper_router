@@ -129,52 +129,51 @@ class TestFlattenProviders:
 
 class TestErrorOutputs:
     def test_no_query_provided(self) -> None:
-        code, data = _run_cli_json()
-        assert code == 1
-        assert data["success"] is False
-        assert "No queries provided" in data["error"]
+        code, stdout = _run_cli("search")
+        # argparse exits with code 2 when --queries is missing
+        assert code in (1, 2)
 
     def test_unknown_provider(self) -> None:
-        code, data = _run_cli_json("--queries", "test", "--providers", "fake_provider")
+        code, data = _run_cli_json("search", "--queries", "test", "--providers", "fake_provider")
         assert code == 1
         assert data["success"] is False
         assert "Unknown provider" in data["error"]
         assert "available_providers" in data
 
     def test_invalid_date(self) -> None:
-        code, data = _run_cli_json("--queries", "test", "--start_date", "bad-date")
+        code, data = _run_cli_json("search", "--queries", "test", "--start_date", "bad-date")
         assert code == 1
         assert data["success"] is False
         assert "Invalid date format" in data["error"]
 
     def test_start_after_end_date(self) -> None:
         code, data = _run_cli_json(
-            "--queries", "test", "--start_date", "2025-01-01", "--end_date", "2024-01-01"
+            "search", "--queries", "test", "--start_date", "2025-01-01", "--end_date", "2024-01-01"
         )
         assert code == 1
         assert data["success"] is False
         assert "start_date must be <= end_date" in data["error"]
 
     def test_limit_zero_rejected(self) -> None:
-        code, data = _run_cli_json("--queries", "test", "--limit", "0")
+        code, data = _run_cli_json("search", "--queries", "test", "--limit", "0")
         assert code == 1
         assert data["success"] is False
         assert "limit must be positive" in data["error"]
 
     def test_limit_negative_rejected(self) -> None:
-        code, data = _run_cli_json("--queries", "test", "--limit", "-5")
+        code, data = _run_cli_json("search", "--queries", "test", "--limit", "-5")
         assert code == 1
         assert data["success"] is False
         assert "limit must be positive" in data["error"]
 
     def test_blank_query_rejected(self) -> None:
-        code, data = _run_cli_json("--queries", "", "real query")
+        code, data = _run_cli_json("search", "--queries", "", "real query")
         assert code == 1
         assert data["success"] is False
         assert "Empty query" in data["error"]
 
     def test_whitespace_only_query_rejected(self) -> None:
-        code, data = _run_cli_json("--queries", "   ")
+        code, data = _run_cli_json("search", "--queries", "   ")
         assert code == 1
         assert data["success"] is False
         assert "Empty query" in data["error"]
@@ -189,11 +188,11 @@ class TestSearchOutput:
         mock_papers = [_make_paper()]
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = mock_papers
+            mock_router.search.return_value = (mock_papers, [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, data = _run_cli_json("--queries", "test query", "--providers", "openalex")
+            code, data = _run_cli_json("search", "--queries", "test query", "--providers", "openalex")
 
         assert code == 0
         assert data["success"] is True
@@ -217,11 +216,11 @@ class TestSearchOutput:
         mock_papers = [_make_paper()]
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = mock_papers
+            mock_router.search.return_value = (mock_papers, [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, stdout = _run_cli("--queries", "test", "--providers", "openalex", "--compact")
+            code, stdout = _run_cli("search", "--queries", "test", "--providers", "openalex", "--compact")
 
         assert code == 0
         lines = stdout.strip().split("\n")
@@ -239,7 +238,7 @@ class TestSearchOutput:
         async def mock_search(request):
             result = results_per_call[call_count[0]]
             call_count[0] += 1
-            return result
+            return (result, [])
 
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
@@ -247,7 +246,7 @@ class TestSearchOutput:
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, data = _run_cli_json("--queries", "query1", "query2", "--providers", "openalex")
+            code, data = _run_cli_json("search", "--queries", "query1", "query2", "--providers", "openalex")
 
         assert code == 0
         assert data["count"] == 2
@@ -258,12 +257,12 @@ class TestSearchOutput:
     def test_multi_provider_selection(self) -> None:
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = []
+            mock_router.search.return_value = ([], [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
             code, data = _run_cli_json(
-                "--queries", "test",
+                "search", "--queries", "test",
                 "--providers", "openalex", "arxiv",
             )
 
@@ -274,12 +273,12 @@ class TestSearchOutput:
     def test_repeated_providers_flag_flattened(self) -> None:
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = []
+            mock_router.search.return_value = ([], [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
             code, data = _run_cli_json(
-                "--queries", "test",
+                "search", "--queries", "test",
                 "--providers", "openalex",
                 "--providers", "arxiv",
                 "--providers", "openalex",
@@ -292,11 +291,11 @@ class TestSearchOutput:
     def test_limit_passed_to_search_request(self) -> None:
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = []
+            mock_router.search.return_value = ([], [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, data = _run_cli_json("--queries", "test", "--limit", "5")
+            code, data = _run_cli_json("search", "--queries", "test", "--limit", "5")
 
         assert code == 0
         call_args = mock_router.search.call_args[0][0]
@@ -305,12 +304,12 @@ class TestSearchOutput:
     def test_date_range_passed_to_search_request(self) -> None:
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = []
+            mock_router.search.return_value = ([], [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
             code, data = _run_cli_json(
-                "--queries", "test",
+                "search", "--queries", "test",
                 "--start_date", "2024-01-01",
                 "--end_date", "2024-12-31",
             )
@@ -323,11 +322,11 @@ class TestSearchOutput:
     def test_all_providers_by_default(self) -> None:
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
-            mock_router.search.return_value = []
+            mock_router.search.return_value = ([], [])
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, data = _run_cli_json("--queries", "test")
+            code, data = _run_cli_json("search", "--queries", "test")
 
         assert code == 0
         assert len(data["providers"]) == 4
@@ -346,7 +345,7 @@ class TestProviderFaultTolerance:
         async def mock_search(request):
             call_count[0] += 1
             if request.providers == ("openalex",):
-                return [paper]
+                return ([paper], [])
             raise RuntimeError("Provider down")
 
         with patch("paper_router.cli.create_router") as mock_create:
@@ -356,7 +355,7 @@ class TestProviderFaultTolerance:
             mock_create.return_value = mock_router
 
             code, data = _run_cli_json(
-                "--queries", "test", "--providers", "openalex", "arxiv"
+                "search", "--queries", "test", "--providers", "openalex", "arxiv"
             )
 
         assert code == 0
@@ -374,7 +373,7 @@ class TestProviderFaultTolerance:
             mock_router.aclose = AsyncMock()
             mock_create.return_value = mock_router
 
-            code, data = _run_cli_json("--queries", "test", "--providers", "openalex")
+            code, data = _run_cli_json("search", "--queries", "test", "--providers", "openalex")
 
         assert code == 1
         assert data["success"] is False
@@ -398,7 +397,7 @@ class TestProviderFaultTolerance:
             call_idx[0] += 1
             if isinstance(result, Exception):
                 raise result
-            return result
+            return (result, [])
 
         with patch("paper_router.cli.create_router") as mock_create:
             mock_router = AsyncMock()
@@ -407,7 +406,7 @@ class TestProviderFaultTolerance:
             mock_create.return_value = mock_router
 
             code, data = _run_cli_json(
-                "--queries", "q1", "q2", "--providers", "openalex", "arxiv"
+                "search", "--queries", "q1", "q2", "--providers", "openalex", "arxiv"
             )
 
         assert code == 0
