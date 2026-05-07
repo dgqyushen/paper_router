@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from paper_router.models import SearchRequest
 from paper_router.providers.crossref import CrossrefProvider, _parse_crossref_date
 

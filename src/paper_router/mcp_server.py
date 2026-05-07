@@ -3,20 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import date
-from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from paper_router.models import SearchRequest
 from paper_router.registry import (
     PROVIDER_DESCRIPTIONS,
     PROVIDER_MAP,
     create_router,
 )
-from paper_router.models import SearchRequest
-from paper_router.router import PaperRouter
-
+from paper_router.serialization import paper_to_dict
 
 server = Server("paper-router")
 
@@ -71,20 +69,6 @@ async def handle_list_tools() -> list[Tool]:
     ]
 
 
-def _paper_to_dict(paper: Any) -> dict[str, Any]:
-    return {
-        "title": paper.title,
-        "authors": list(paper.authors),
-        "publication_date": paper.publication_date.isoformat() if paper.publication_date else None,
-        "doi": paper.doi,
-        "abstract": paper.abstract,
-        "venue": paper.venue,
-        "quartile": paper.quartile.value if paper.quartile else None,
-        "source": paper.source,
-        "url": paper.url,
-        "external_id": paper.external_id,
-    }
-
 
 async def _handle_search_papers(arguments: dict) -> list[TextContent]:
     """Execute search_papers tool. Extracted for testability."""
@@ -103,7 +87,7 @@ async def _handle_search_papers(arguments: dict) -> list[TextContent]:
             limit=limit,
         )
         papers, warnings = await router.search(request)
-        results = [_paper_to_dict(p) for p in papers]
+        results = [paper_to_dict(p) for p in papers]
         output: dict = {"count": len(results), "results": results}
         if warnings:
             output["warnings"] = warnings

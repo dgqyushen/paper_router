@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Iterable
 from datetime import date
 
@@ -62,21 +63,7 @@ class PaperRouter:
             if paper.venue:
                 q = store.lookup(paper.venue)
                 if q is not None:
-                    enriched.append(
-                        Paper(
-                            source=paper.source,
-                            external_id=paper.external_id,
-                            title=paper.title,
-                            abstract=paper.abstract,
-                            publication_date=paper.publication_date,
-                            doi=paper.doi,
-                            authors=paper.authors,
-                            venue=paper.venue,
-                            quartile=q,
-                            url=paper.url,
-                            raw=paper.raw,
-                        )
-                    )
+                    enriched.append(dataclasses.replace(paper, quartile=q))
                     continue
 
             enriched.append(paper)

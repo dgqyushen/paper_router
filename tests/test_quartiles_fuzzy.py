@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from paper_router.quartiles.fuzzy import normalize_journal_name, fuzzy_match_journal
+from paper_router.quartiles.fuzzy import fuzzy_match_journal, normalize_journal_name
 
 
 def test_normalize_lowercases() -> None:

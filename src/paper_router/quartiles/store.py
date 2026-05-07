@@ -39,6 +39,7 @@ class QuartileStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_DDL)
         self._cache: dict[str, Quartile | None] = {}
+        self._candidates: dict[str, str] | None = None
 
     def upsert_batch(
         self,
@@ -69,6 +70,7 @@ class QuartileStore:
         self._set_meta("last_updated", now)
         self._set_meta("jcr_year", str(jcr_year))
         self._cache.clear()
+        self._candidates = None
         return len(rows)
 
     def lookup(self, journal_name: str) -> Quartile | None:
@@ -79,28 +81,29 @@ class QuartileStore:
         if norm in self._cache:
             return self._cache[norm]
 
-        # Load all normalized names from DB
-        cursor = self._conn.execute(
-            "SELECT journal_name_norm, jcr_quartile FROM journals"
-        )
-        candidates: dict[str, str] = {}
-        for row in cursor:
-            candidates[row[0]] = row[1]
+        # Lazy-load all normalized names from DB (cached across calls)
+        if self._candidates is None:
+            cursor = self._conn.execute(
+                "SELECT journal_name_norm, jcr_quartile FROM journals"
+            )
+            self._candidates = {}
+            for row in cursor:
+                self._candidates[row[0]] = row[1]
 
-        if not candidates:
+        if not self._candidates:
             self._cache[norm] = None
             return None
 
         # Try exact match
-        if norm in candidates:
-            q = Quartile(candidates[norm])
+        if norm in self._candidates:
+            q = Quartile(self._candidates[norm])
             self._cache[norm] = q
             return q
 
         # Fuzzy match
-        match = fuzzy_match_journal(journal_name, set(candidates.keys()))
+        match = fuzzy_match_journal(journal_name, set(self._candidates.keys()))
         if match:
-            q = Quartile(candidates[match])
+            q = Quartile(self._candidates[match])
             self._cache[norm] = q
             return q
 

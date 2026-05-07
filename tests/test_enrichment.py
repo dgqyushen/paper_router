@@ -8,7 +8,7 @@ from paper_router import PaperRouter, Quartile, SearchRequest
 from paper_router.models import Paper
 from paper_router.providers.base import PaperProvider
 from paper_router.quartiles import QuartileStore
-from paper_router.rate_limit import AsyncRateLimiter, RateLimit
+from paper_router.rate_limit import RateLimit
 
 
 class StubProvider(PaperProvider):

@@ -9,10 +9,10 @@ from paper_router.mcp_server import (
     _handle_list_providers,
     _handle_search_papers,
     _parse_date_arg,
-    _paper_to_dict,
 )
-from paper_router.registry import create_router
 from paper_router.models import Paper, Quartile
+from paper_router.registry import create_router
+from paper_router.serialization import paper_to_dict
 
 
 class TestMCPHelpers:
@@ -54,7 +54,7 @@ class TestMCPHelpers:
             quartile=Quartile.Q1,
             url="https://example.com",
         )
-        d = _paper_to_dict(paper)
+        d = paper_to_dict(paper)
         assert d["title"] == "Test"
         assert d["authors"] == ["John Doe"]
         assert d["quartile"] == "Q1"
@@ -62,7 +62,7 @@ class TestMCPHelpers:
 
     def test_paper_to_dict_minimal(self) -> None:
         paper = Paper(source="test", external_id="1", title="Minimal")
-        d = _paper_to_dict(paper)
+        d = paper_to_dict(paper)
         assert d["quartile"] is None
         assert d["publication_date"] is None
         assert d["doi"] is None

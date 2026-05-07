@@ -23,6 +23,30 @@ packages = [{include = "paper_router", from = "src"}]
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
 pytest-asyncio = "^0.26.0"
+ruff = ">=0.11.0,<1.0.0"
+mypy = ">=1.15.0,<2.0.0"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ignore = ["B904"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+follow_imports = "normal"
+enable_error_code = ["ignore-without-code", "import-untyped", "no-redef"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

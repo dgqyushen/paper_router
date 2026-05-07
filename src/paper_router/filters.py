@@ -13,10 +13,7 @@ def paper_matches_request(paper: Paper, request: SearchRequest) -> bool:
     if request.end_date and paper.publication_date and paper.publication_date > request.end_date:
         return False
 
-    if request.quartiles and paper.quartile not in request.quartiles:
-        return False
-
-    return True
+    return not (request.quartiles and paper.quartile not in request.quartiles)
 
 
 def filter_papers(papers: list[Paper], request: SearchRequest) -> list[Paper]:

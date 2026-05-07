@@ -12,11 +12,10 @@ import pytest
 from paper_router.cli import (
     _build_parser,
     _flatten_providers,
-    _parse_date,
     main,
 )
 from paper_router.models import Paper, Quartile
-
+from paper_router.serialization import parse_date
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,7 +41,7 @@ def _run_cli(*args: str) -> tuple[int, str]:
 def _run_cli_json(*args: str) -> tuple[int, dict]:
     """Run CLI, parse the last NDJSON line (the result event), return (exit_code, parsed)."""
     code, stdout = _run_cli(*args)
-    lines = [l for l in stdout.strip().split("\n") if l.strip()]
+    lines = [line for line in stdout.strip().split("\n") if line.strip()]
     if not lines:
         return code, {}
     return code, json.loads(lines[-1])
@@ -86,24 +85,17 @@ class TestBuildParser:
 
 class TestParseDate:
     def test_valid_date(self) -> None:
-        assert _parse_date("2024-06-15", "start_date") == date(2024, 6, 15)
+        assert parse_date("2024-06-15", "start_date") == date(2024, 6, 15)
 
     def test_none(self) -> None:
-        assert _parse_date(None, "start_date") is None
+        assert parse_date(None, "start_date") is None
 
     def test_empty_string(self) -> None:
-        assert _parse_date("", "start_date") is None
+        assert parse_date("", "start_date") is None
 
-    def test_invalid_exits_with_json_error(self, capsys: pytest.CaptureFixture) -> None:
-        with pytest.raises(SystemExit) as exc_info:
-            _parse_date("not-a-date", "start_date")
-        assert exc_info.value.code == 1
-        out = capsys.readouterr().out
-        data = json.loads(out)
-        assert data["finish"] is True
-        assert data["type"] == "result"
-        assert data["success"] is False
-        assert "Invalid date format" in data["error"]
+    def test_invalid_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid date format"):
+            parse_date("not-a-date", "start_date")
 
 
 # ---------------------------------------------------------------------------
@@ -424,8 +416,8 @@ class TestProviderFaultTolerance:
 class TestMainModuleCompat:
     def test_main_py_delegates_to_cli(self) -> None:
         """Verify src/paper_router/main.py is a thin wrapper."""
-        from paper_router.main import main as legacy_main
         from paper_router.cli import main as cli_main
+        from paper_router.main import main as legacy_main
         assert legacy_main is cli_main
 
 
@@ -438,6 +430,5 @@ class TestLegacyTaskManager:
         """Ensure TaskManager in main.py is still importable for backward compat."""
         import sys
         sys.path.insert(0, str(tmp_path))
-        from paper_router.main import main as _
         # main.py no longer re-exports TaskManager, but the module is importable
         # and doesn't crash. This verifies the thin wrapper works.

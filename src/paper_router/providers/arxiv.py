@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from datetime import date, datetime
+from datetime import datetime
 
 from ..models import Paper, SearchRequest
 from ..rate_limit import RateLimit
@@ -58,10 +58,7 @@ class ArXivProvider(PaperProvider):
         arxiv_id = paper_id.rsplit("/", 1)[-1].split("v", 1)[0]
 
         title_el = entry.find(f"{{{ATOM_NS}}}title")
-        if title_el is not None and title_el.text:
-            title = re.sub(r"\s+", " ", title_el.text.strip())
-        else:
-            title = ""
+        title = re.sub(r"\s+", " ", title_el.text.strip()) if title_el is not None and title_el.text else ""
 
         summary_el = entry.find(f"{{{ATOM_NS}}}summary")
         summary = summary_el.text.strip() if summary_el is not None and summary_el.text else None

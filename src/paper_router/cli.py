@@ -21,6 +21,7 @@ from paper_router.registry import (
     VALID_PROVIDER_NAMES,
     create_router,
 )
+from paper_router.serialization import paper_to_dict, parse_date
 
 
 def _emit(event: dict) -> None:
@@ -36,29 +37,6 @@ def _error(message: str, **extra: object) -> None:
     _emit({"finish": True, "type": "result", "success": False, "error": message, **extra})
     sys.exit(1)
 
-
-def _paper_to_dict(paper: Paper) -> dict:
-    return {
-        "source": paper.source,
-        "external_id": paper.external_id,
-        "title": paper.title,
-        "authors": list(paper.authors),
-        "publication_date": paper.publication_date.isoformat() if paper.publication_date else None,
-        "doi": paper.doi,
-        "venue": paper.venue,
-        "abstract": paper.abstract,
-        "url": paper.url,
-        "quartile": paper.quartile.value if paper.quartile else None,
-    }
-
-
-def _parse_date(value: str | None, field_name: str) -> date | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        _error(f"Invalid date format for {field_name}: {value!r}. Expected YYYY-MM-DD.")
 
 
 async def _run_search(
@@ -80,7 +58,11 @@ async def _run_search(
     store = QuartileStore()
 
     try:
-        _emit({"finish": False, "type": "progress", "current": current, "total": total, "message": "Starting search..."})
+        _emit({
+            "finish": False, "type": "progress",
+            "current": current, "total": total,
+            "message": "Starting search...",
+        })
         print(f"[{current}/{total}] Starting search...", file=sys.stderr)
 
         for query in queries:
@@ -113,7 +95,7 @@ async def _run_search(
                         "provider": provider_name,
                         "query": query,
                         "count": len(papers),
-                        "papers": [_paper_to_dict(p) for p in papers],
+                        "papers": [paper_to_dict(p) for p in papers],
                     })
                 except Exception as exc:
                     msg = f"Provider '{provider_name}' failed for query '{query}': {exc}"
@@ -138,7 +120,7 @@ async def _run_search(
         # Sort by date (newest first)
         unique.sort(key=lambda p: p.publication_date or date.min, reverse=True)
 
-        results = [_paper_to_dict(p) for p in unique]
+        results = [paper_to_dict(p) for p in unique]
 
         if success_count == 0:
             _emit({
@@ -288,8 +270,14 @@ def main() -> None:
         if args.limit is not None and args.limit <= 0:
             _error(f"limit must be positive, got {args.limit}")
 
-        start_date = _parse_date(args.start_date, "start_date")
-        end_date = _parse_date(args.end_date, "end_date")
+        try:
+            start_date = parse_date(args.start_date, "start_date")
+        except ValueError as e:
+            _error(str(e))
+        try:
+            end_date = parse_date(args.end_date, "end_date")
+        except ValueError as e:
+            _error(str(e))
 
         if start_date and end_date and start_date > end_date:
             _error("start_date must be <= end_date")

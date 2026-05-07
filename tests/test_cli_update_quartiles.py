@@ -3,8 +3,6 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
-
 
 def test_cli_update_quartiles_help() -> None:
     result = subprocess.run(

@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
 from paper_router.models import SearchRequest
 from paper_router.providers.arxiv import ArXivProvider
-
 
 SAMPLE_ARXIV_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>

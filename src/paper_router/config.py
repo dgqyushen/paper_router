@@ -4,7 +4,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 _PROVIDER_ENV_VARS: dict[str, str] = {
     "semantic_scholar": "SEMANTIC_SCHOLAR_API_KEY",
     "openalex": "OPENALEX_API_KEY",
